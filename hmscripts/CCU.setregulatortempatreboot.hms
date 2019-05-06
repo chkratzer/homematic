@@ -1,0 +1,86 @@
+!
+! Set all temperature regulator to the programed value after a restart of the CCU
+! ----- User setable variables
+!
+string groupname = "chauffage";                                 ! Groupe de chauffage
+boolean debug                   = true;                                 ! if set, output what is done
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = "";
+string stderr = "";
+string nl = "\n"; ! new line char
+string tab = "\t";  ! tab char
+string timeoutlist = "";
+string temperaturelist = "";
+real temperaturesetpoint = 12.0;
+time currentdate = system.Date("%F %T").ToTime();
+integer currentdayminute = (currentdate.Hour()*60) + currentdate.Minute();
+if(debug){WriteLine("Current time (minute): "#currentdayminute);}
+
+system.Exec("echo \""#system.Date("%A")#"\" | awk \'{print toupper($0)}\'",&stdout,&stderr);
+string weekday = stdout.Substr(0,stdout.Length()-1);  ! renove CR thermoChan2Str
+if(debug){WriteLine("Week day: "#weekday)}
+
+object group = dom.GetObject(groupname);
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+string channelid;
+foreach(channelid, group.EnumUsedIDs()){
+	object channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	if (channel.HssType() == "CLIMATECONTROL_REGULATOR"){
+		object regulator = channel;
+    temperaturelist = "";
+    timeoutlist = "";
+    system.Exec("/usr/local/getparam.tcl "+ regulator.Address(),&stdout,&stderr);
+    string line = "";
+    foreach(line, stdout.Split(nl)) {
+      if (line.Find("MODE_TEMPERATUR_REGULATOR") != -1){
+        integer regulatormode = line.StrValueByIndex("=",1).ToInteger();
+        if (debug){WriteLine("Regulator mode: "#regulatormode);}
+      }
+      if (line.Find("TIMEOUT_" # weekday) != -1) {
+        timeoutlist = timeoutlist # line # tab;
+      }
+      if (line.Find("TEMPERATUR_" # weekday) != -1 ) {
+        temperaturelist = temperaturelist # line # tab;
+      }
+      if (line.Find("TEMPERATUR_COMFORT_VALUE") != -1 ) {
+        real conforttemperature = line.StrValueByIndex("=",1).ToFloat();
+        if (debug){WriteLine("Confort temperature: "#conforttemperature);}
+      }
+      if (line.Find("TEMPERATUR_PARTY_VALUE") != -1 ) {
+        real holydaytemperature = line.StrValueByIndex("=",1).ToFloat();
+        if (debug){WriteLine("Hollyday temperature: "#holydaytemperature);}
+      }
+    }
+    if(debug){WriteLine("Timeout list: "#timeoutlist);}
+    if(debug){WriteLine("Temperature list: "#temperaturelist)}
+    if (regulatormode==0 || regulatormode == 2){    ! Set the for MNUAL and CCU driven mode the temp to the confort temperature
+      temperaturesetpoint = conforttemperature;
+    }
+    if (regulatormode == 1){
+      integer i = 0;
+      integer prevval = 0;
+      while((currentdayminute > timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToInteger()) || (currentdayminute < prevval)) {
+        prevVal = timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToInteger();
+        i = i + 1;
+      }
+      string timeoutindex = timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",0).StrValueByIndex("_",2);
+      temperaturesetpoint = temperaturelist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToFloat();
+    }
+    if (regulatormode==3){    ! Set the for holyday mode the temp to the holyday/party temperature
+      temperaturesetpoint = holydaytemperature;
+    }
+    ! set the
+    regulator.DPByHssDP("SETPOINT").State(temperaturesetpoint);
+    if(debug){WriteLine("Set temperature of "#regulator.Name()#"-"#regulator.Address()#": "#temperaturesetpoint);}
+  }
+}

@@ -1,0 +1,115 @@
+!
+! Set all regulator devices to party(holiday) mode
+!
+! ----- User setable variables
+
+string groupname = "chauffage";                                 ! function or room name
+string holidayenddatename = "heating.holyday.enddatetime";      ! System variable for PARTY end date
+string holidaytempname = "heating.holyday.temp";				! System variable for PARTY temperature
+
+boolean debug = false;
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = "";
+string stderr = "";
+object group; string channelid; object channel;
+object regulator; object regulatordevice; string varname; object regulatormodevar; integer regulatormode;
+object holidayenddate; object holidaytemp;
+time currentdate; time enddate; integer diffday;
+real partyendday; integer enddatehour; integer enddateminute; integer enddateminute;
+
+
+group = dom.GetObject(groupname);
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+holidayenddate = dom.GetObject(holidayenddatename);
+if(!holidayenddate){
+  if(debug){WriteLine("holiday system variable name ("#holidayenddatename#") does not exist - quit!");}
+  quit;
+};
+if (debug){WriteLine("Holiday end date string: "#holidayenddate.Variable());}
+
+holidaytemp = dom.GetObject(holidaytempname);
+if(!holidaytemp){
+  if(debug){WriteLine("holiday system variable name ("#holidaytempname#") does not exist - quit!");}
+  quit;
+};
+
+if (debug){WriteLine("Holiday temperature set: "#holidaytemp.Variable());}
+
+currentdate = system.Date("%F %T").ToTime();
+if(debug){WriteLine("Current date and time: "#currentdate);}
+enddate = holidayenddate.Variable().ToTime();
+if (currentdate > enddate){
+	if (debug){WriteLine("End date and time is in the past or in bad format ("#holidayenddate.Variable()#") - quit!");}
+	quit;
+}
+diffday = (enddate - currentdate).ToInteger() / 86400;
+if (diffday >= 200){
+	enddate = (currentdate.ToInteger() + (200 *86400)).ToTime();
+	if (debug){WriteLine("End date and time over max allowed value of 200 days ("#diffday#") - set new end date: "#enddate);}
+	system.Exec("logger -t \"holiday.mode.program\" -p user.warn \"End date too far in future (max: 200, current: "#diffday#"). New end date: "#enddate#"\"",&stdout,&stderr);
+	diffday = 200;
+}
+partyendday = diffday.ToString().ToFloat(); ! Convert diffday from integer to real
+
+enddatehour = enddate.Format("%H").ToInteger();  !
+! The minutes for the end date and time are 0 for real 0 to 30 min and 1 for 30 to 59 min
+if (enddate.Format("%M").ToInteger() < 30) {
+	enddateminute=0;
+} else {
+	enddateminute=1;
+}
+
+foreach(channelid, group.EnumUsedIDs()){
+	channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	if (channel.HssType() == "CLIMATECONTROL_REGULATOR"){
+		regulator = channel;
+		regulatordevice = dom.GetObject(regulator.Device());
+		varname = "";
+		regulatormodevar = "";
+		foreach (varname,regulator.DPs().EnumUsedNames()){
+			if (varname.Find("regulatormode") <> -1){
+				regulatormodevar = dom.GetObject(varname);
+				regulatormode = regulatormodevar.State();
+				if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": variable regulatormode found-"#varname);}
+			}
+		}
+		if (regulatormodevar.Name() <> ""){
+			regulatormode = regulatormodevar.State();
+		} else {
+			system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" MODE_TEMPERATUR_REGULATOR",&stdout,&stderr);
+			stdout = stdout.Substr(0,stdout.Length()-1);   ! remove return line char
+			if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Get regulator temperature mode getparam.tcl: stdout="#stdout#", stderr="#stderr);}
+			if (stderr <> ""){
+				if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Error on getparam.tcl request - exit!");}
+				quit;
+			}
+			regulatormode = stdout.ToInteger();
+		}
+		if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Regulator mode: "#regulatormode);}
+		if(regulatormode <> 3){
+			xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","PARTY_END_DAY",partyendday);
+			xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","PARTY_END_HOUR",enddatehour);
+			xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","PARTY_END_MINUTE",enddateminute);
+			xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","TEMPERATUR_PARTY_VALUE",holidaytemp.Value());
+			if (regulatormodevar.Name() <> ""){
+				regulatormodevar.State(3);	! set regulator to PARTY mode
+			}
+			else{
+				xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","MODE_TEMPERATUR_REGULATOR",3); ! set regulator to PARTY mode
+			}
+			if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Set regulator to holiday. Ends in "#diffday#" days and at time hour: "#enddatehour#", minute: "#enddateminute * 30);}
+			system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Change the mode to PARTY(holiday). Number of days: "#diffday#", hour: "#enddatehour#", minute: "#(enddateminute * 30)#"\"",&stdout,&stderr);
+			system.Exec("/bin/sleep 1 ",&stdout,&stderr);
+		}
+	}
+}

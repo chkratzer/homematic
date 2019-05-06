@@ -1,0 +1,20 @@
+!
+! Set regulator mode from the associated variable.
+!
+! ----- User setable variables
+boolean debug = true;
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+object source = dom.GetObject("$src$");
+if (!source){
+  quit;
+}
+object regulatorvar = source;
+object sourcechannel = dom.GetObject(source.Channel());
+if (sourcechannel.HssType() == "CLIMATECONTROL_REGULATOR"){
+  object regulator = sourcechannel;
+  object regulatordevice = dom.GetObject(regulator.Device());
+  xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","MODE_TEMPERATUR_REGULATOR",regulatorvar.State());
+  if(debug){system.Exec("logger -t "#regulator.Name()#"-"#regulator.Address()#" -p user.info "Variable name-"#regulatorvar.Name()#", value-"#regulatorvar.State()#""");}
+}

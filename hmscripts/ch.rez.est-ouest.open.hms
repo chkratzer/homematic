@@ -1,0 +1,65 @@
+!
+! In a room having at least two thermostats when a window sensor detect a window opened it'll change the other
+! thermostats to the reduction temperature.
+!
+! ----- User setable variables
+boolean debug = false;
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+integer regulatorchannelmode;
+string stdout = "";
+string stderr = "";
+string nl = "\n"; ! new line char
+string tab = "\t";  ! tab char
+real roomsetpoint = 12.0;
+object source; object sourcechannel;
+object regulator; object regulatordevice; string varname; object regulatorvar;
+
+source = dom.GetObject("$src$");
+if (!source){
+	system.Exec("logger -t \"CCU script\" -p user.error \"\$src\$ not present.\"");
+	quit;
+}
+sourcechannel = dom.GetObject(source.Channel());
+if (sourcechannel.HssType() <> "CLIMATECONTROL_REGULATOR"){
+	system.Exec("logger -t \""#sourcechannel.Name()#"\" -p user.error \"$src$ is not a climat control regulator. It's: "#sourcechannel.HssType()#"\"");
+	quit;
+}
+regulator = sourcechannel;
+regulatordevice = dom.GetObject(regulator.Device());
+varname = ""; regulatorvar = "";
+foreach (varname,regulator.DPs().EnumUsedNames()){
+  if (varname.Find("regulatormode") <> -1){ ! find if a "regulatormode" linked (to regulator) variable is present 
+    regulatorvar = dom.GetObject(varname);
+    regulatormode = regulatorvar.State();
+	if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Found variable name-"#regulatorvar.Name()#", value-"#regulatorvar.State()#"\"");}
+  }
+}
+if (regulatorvar.Name() <> ""){
+	regulatormode = regulatorvar.State();
+}
+else {
+	system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" MODE_TEMPERATUR_REGULATOR",&stdout,&stderr);
+	stdout = stdout.Substr(0,stdout.Length()-1);   ! remove return line char
+	if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Get regulator temperature mode getparam.tcl: stdout="#stdout#", stderr="#stderr#"\"");}
+	if (stderr <> ""){
+		system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.error \"Error on getparam.tcl request - exit \"");
+		quit;
+	}
+	regulatormode = stdout.ToInteger();
+}
+
+if (regulatormode == 1) { ! Execute only for AUTO
+	system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" TEMPERATUR_LOWERING_VALUE",&stdout,&stderr);
+	stdout = stdout.Substr(0,stdout.Length()-1);   ! remove return line char
+	roomsetpoint = stdout.ToFloat();
+	if (regulatorvar.Name() <> ""){
+		regulatorvar.State(2); ! set to CCU mode
+	}
+	else {
+		xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","MODE_TEMPERATUR_REGULATOR",2); ! set to CCU mode
+	}
+	regulator.DPByHssDP("SETPOINT").State(roomsetpoint);
+	system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Setpoint: "#roomsetpoint#"\"",&stdout,&stderr);
+}

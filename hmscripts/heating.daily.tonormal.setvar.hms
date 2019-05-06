@@ -1,0 +1,48 @@
+!
+! Set the heating house mode system variable to normal automatically
+!
+! ----- User setable variables
+
+string heatinghousemodename = "heating.mode";           !
+string holidayenddatename = "heating.holyday.enddatetime";     ! End date of hollday
+
+boolean debug = false;
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = "";
+string stderr = "";
+object heatinghousemode; object holidayenddate;
+time currentdate; time enddate; integer diffday; 
+
+heatinghousemode = dom.GetObject(heatinghousemodename);
+! test if the heatinghousemode is present
+if(!heatinghousemode){
+  if(debug){WriteLine("System variable name for heating mode ("#heatinghousemodename#") does not exist - quit!");}
+  quit;
+};
+if(debug){WriteLine("Heating mode: "#heatinghousemode.Variable());}
+
+holidayenddate = dom.GetObject(holidayenddatename);
+! test if the enddate is present
+if(!holidayenddate){
+  if(debug){WriteLine("System variable name for end date ("#holidayenddate#") does not exist - quit!");}
+  quit;
+};
+if(debug){WriteLine("End date: "#holidayenddate.Variable());}
+
+currentdate = system.Date("%F %T").ToTime();
+if(debug){WriteLine("Current date and time: "#currentdate);}
+enddate = holidayenddate.Variable().ToTime();
+if (enddate == 0){
+	if (debug){WriteLine("End date in bad format ("#holidayenddate.Variable()#") - quit!");}
+	quit;
+}
+diffday = (enddate - currentdate).ToInteger();
+if(debug){WriteLine("Date difference: "#diffday.ToInteger());}
+if ( (diffday < 0) && (heatinghousemode.Variable().ToInteger() != 0)){
+	heatinghousemode.Variable(0);
+	if (debug){WriteLine("Set heating house mode to normal");}
+	system.Exec("logger -t \""#heatinghousemodename#"\" -p user.info \"Change to normal\"",&stdout,&stderr);
+}

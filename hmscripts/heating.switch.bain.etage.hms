@@ -1,0 +1,164 @@
+! heating bain.etage
+! Start a booster to speed up the heating.
+
+! As the Thermostats do not rember the time they have switched their mode this script uses a
+! variable to store the first time the thermostat had changed mode, this variable is created if not exists.
+!
+! ----- User setable variables
+
+string groupname = "bain.etage";                                 ! Groupe de chauffage
+boolean debug = false;
+real temphysteresis = 0.3;                                          ! Histeris on the temperature
+integer valvestartheat = 79;										! Start electitric heating when the valve is over x % opened
+integer heattimeout = 600;                      ! A timeout is set in case of communication problem with CCU the heating will stop
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+integer heattimeout = 600;							! heating on switch duration (second)
+real roomsetpoint = 12.0;
+integer progCycle = 70;								! Duration cycle of this program execution (second)
+string stdout = "";
+string stderr = "";
+time laststatetime;
+string varname = "";
+
+object group = dom.GetObject(groupname);
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+! Set the channels regulator, tempsensor and heatswitch
+string channelid;
+foreach(channelid, group.EnumUsedIDs()){
+	object channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	if (channel.HssType() == "CLIMATECONTROL_REGULATOR"){
+		object regulator = channel;
+		string varname = "";
+		foreach (varname,channel.DPs().EnumUsedNames()){
+		if (varname.Find("regulatormode") <> -1){
+			object regulatormodevar = dom.GetObject(varname);
+			integer regulatormode = regulatormodevar.State();
+		}
+	}
+    if (!regulatormode){
+        ! Get the channel mode
+        system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" MODE_TEMPERATUR_REGULATOR",&stdout,&stderr);
+        stdout = stdout.Substr(0,stdout.Length()-1);   ! renove return line char
+        if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Get regulator temperature mode getparam.tcl: stdout="#stdout#", stderr="#stderr);}
+        if (stderr <> ""){
+          if (debug){WriteLine("Error on getparam.tcl request - exit!");}
+          quit;
+        }
+        integer regulatormode = stdout.ToInteger();
+      }
+    if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Regulator mode: "#regulatormode);}
+    }
+	if (channel.HssType() == "WEATHER"){
+		object tempsensor = channel;
+	}
+	if (channel.HssType() == "SWITCH"){
+		object heatswitch = channel;
+		object heatswitchdevice = dom.GetObject(heatswitch.Device());
+		object heatswitchinterface = dom.GetObject(heatswitchdevice.Interface());
+		boolean heatswitchunreach = dom.GetObject(heatswitchinterface.Name()#"."#heatswitchdevice.Address()# ":0.UNREACH");
+		object heatswitchstickyunreach = dom.GetObject("AL-"#heatswitchdevice.Address()# ":0.STICKY_UNREACH");
+		if (debug) {WriteLine("Channel info "#channelid#"-"#channel.Name()#": UNREACH state: "#heatswitchunreach.Value()#", STICKY_UNREACH state: "#heatswitchstickyunreach.Value())};
+		varname = "";
+		if (heatswitchunreach.Value()) {
+			heatswitch.State();
+			if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": switch not reachable - exit!");}
+			system.Exec("logger -t "#heatswitch.Name()#"-"#heatswitch.Address()#" -p user.info \"Switch not reachable - exit!\"",&stdout,&stderr);
+			quit;
+		}
+		foreach (varname,heatswitch.DPs().EnumUsedNames()){
+			if (varname.Find("state") <> -1){
+				object heatswitchvar = dom.GetObject(varname);
+				laststatetime = heatswitchvar.Timestamp();
+				if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": switch variable found-"#varname);}
+			}
+		}
+		if (!heatswitchvar){
+			object heatswitchvar = heatswitch;
+			laststatetime = heatswitchvar.LastDPActionTime();
+			if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": switch device found-"#heatswitchvar.Name());}
+		}
+
+		if (heatswitchstickyunreach.Value()){
+			heatswitchstickyunreach.AlReceipt();
+			if (debug) {WriteLine("Channel info "#channelid#"-"#channel.Name()#": STICKY_UNREACH in true, clear service notification")}
+			system.Exec("logger -t "#heatswitch.Name()#"-"#heatswitch.Address()#" -p user.info \"STICKY_UNREACH in true, clear service notification.\"",&stdout,&stderr);
+			if (heatswitchvar.Name() <> heatswitch.Name()){
+				heatswitchvar.State(heatswitch.State());
+				if (debug) {WriteLine("Channel info "#channelid#"-"#channel.Name()#": align variable and DP value")}
+			}
+		}
+		if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Variable name-"#heatswitchvar.Name()#", value-"#heatswitchvar.State()#", timestamp: "#laststatetime)}
+		if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": heating state: "#heatswitch.State())};
+	}
+	if (channel.HssType() == "CLIMATECONTROL_VENT_DRIVE") {
+		object valve = channel;
+	}
+}
+
+if (!(regulator && tempsensor && heatswitch && valve)){
+	if (debug){WriteLine("Not all element are present - quit!");}
+	quit;
+}
+
+if (regulatormode == 3) { ! Holiday mode
+	system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" TEMPERATUR_PARTY_VALUE",&stdout,&stderr);
+	stdout = stdout.Substr(0,stdout.Length()-1);   ! renove return line cha
+	if (stderr <> ""){
+		if (debug){WriteLine("Error on getparam.tcl request - quit!");}
+		quit;
+	}
+	roomsetpoint = stdout.ToFloat();
+	if (debug){WriteLine("Holiday temperature: "#roomsetpoint);}
+} else{
+	roomsetpoint = regulator.DPByHssDP("SETPOINT").Value();
+	if (debug){WriteLine("Set point temperature: "#roomsetpoint);}
+}
+
+real roomtemp = tempsensor.DPByHssDP("TEMPERATURE").Value();
+if(debug){WriteLine("Actual temperature: "#roomtemp);}
+
+boolean booster = (valve.DPByHssDP("VALVE_STATE").Value() > valvestartheat);
+if(debug){WriteLine("Booster actived?: "#booster);}
+
+! Switch piloting algo
+
+time currentdate = system.Date("%F %T").ToTime();
+if(debug){WriteLine("Current date and time: "#currentdate);}
+time endswitchtime = (laststatetime.ToInteger() + heattimeout).ToTime();
+if(debug){WriteLine("Calculated end switch date and time: "#endswitchtime);}
+time extendswitchtime = (endswitchtime.ToInteger() - progCycle).ToTime();
+if(debug){WriteLine("Calculated extend start switch date and time: "#extendswitchtime);}
+
+if ((roomtemp < (roomsetpoint - temphysteresis)) && booster){
+	if ((!heatswitchvar.State()) || (heatswitchvar.State() && (currentdate > extendswitchtime))){ 
+		heatswitch.DPByHssDP("ON_TIME").State(heattimeout);
+		heatswitch.State(1);
+		if (heatswitch.Name() <> heatswitchvar.Name()){
+			heatswitchvar.State(1);
+		}
+		if (debug) {WriteLine("Channel info "#channelid#"-"#channel.Name()#": Temperature: "#roomtemp#", switch on")}
+		system.Exec("logger -t "#heatswitch.Name()#"-"#heatswitch.Address()#" -p user.info \"Temperature: "#roomtemp#", setpoint: "#roomsetpoint#" switch on.\"",&stdout,&stderr);
+	}
+} else {
+	if ((roomtemp > (roomsetpoint + temphysteresis)) || (!booster)){
+		if (heatswitchvar.State()){
+			heatswitch.State(0);
+			if (heatswitch.Name() <> heatswitchvar.Name()){
+				heatswitchvar.State(0);
+			}
+			if (debug) {WriteLine("Channel info "#channelid#"-"#channel.Name()#": Temperature: "#roomtemp#", switch off")}
+			system.Exec("logger -t "#heatswitch.Name()#"-"#heatswitch.Address()#" -p user.info \"Temperature: "#roomtemp#", setpoint: "#roomsetpoint#" switch off.\"",&stdout,&stderr);
+		}
+	}
+}
+

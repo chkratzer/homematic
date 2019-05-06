@@ -1,0 +1,63 @@
+!
+! Set all regulator devices to normal
+!
+! ----- User setable variables
+
+string groupname = "chauffage";                                 ! function or room name
+boolean debug = false;
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = ""; string stderr = "";
+object group; string channelid; object channel;
+object regulator; object regulatordevice; string varname; object regulatormodevar; integer regulatormode;
+
+group = dom.GetObject(groupname);
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+! Set the channels regulator, tempsensor and heatswitch
+foreach(channelid, group.EnumUsedIDs()){
+	channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	if (channel.HssType() == "CLIMATECONTROL_REGULATOR"){
+		regulator = channel;
+		regulatordevice = dom.GetObject(regulator.Device());
+		varname = "";
+		regulatormodevar = "";
+		foreach (varname,regulator.DPs().EnumUsedNames()){
+			if (varname.Find("regulatormode") <> -1){
+				regulatormodevar = dom.GetObject(varname);
+				if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": variable regulatormode found-"#varname);}
+			}
+		}
+		if (regulatormodevar.Name() <> ""){
+			regulatormode=regulatormodevar.State();
+		} else {
+			system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" MODE_TEMPERATUR_REGULATOR",&stdout,&stderr);
+			stdout = stdout.Substr(0,stdout.Length()-1);   ! remove return line char
+			if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Get regulator temperature mode getparam.tcl: stdout="#stdout#", stderr="#stderr);}
+			if (stderr <> ""){
+				if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Error on getparam.tcl request - exit!");}
+				quit;
+			}
+			regulatormode = stdout.ToInteger();
+		}
+		if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Regulator mode: "#regulatormode);}
+		if(regulatormode <> 1){
+			if (regulatormodevar.Name() <> ""){
+				regulatormodevar.State(1); ! set to AUTO mode
+			} else {
+				xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","MODE_TEMPERATUR_REGULATOR",1); ! set to AUTO mode
+				system.Exec("/bin/sleep 1 ",&stdout,&stderr);
+			}
+			if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Set regulator mode to AUTO");}
+		}
+	}
+}

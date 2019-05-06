@@ -1,0 +1,100 @@
+!
+! In a room having at least two thermostats when a window sensor detect a window opened it'll change the other
+! thermostats to the reduction temperature.
+!
+! ----- User setable variables
+boolean debug = false;
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+
+string stdout = ""; string stderr = ""; string nl = "\n"; tab = "\t";
+object source; object regulatorvar; object sourcechannel; object regulator; object regulatordevice;
+real roomsetpoint = 12.0;
+time currentdate = system.Date("%F %T").ToTime();
+integer currentdayminute = (currentdate.Hour()*60) + currentdate.Minute();
+string weekdaystr;
+
+source = dom.GetObject("$src$");
+if (!source){
+	system.Exec("logger -t \"CCU script\" -p user.error \"\$src\$ not present.\"");
+	quit;
+}
+regulatorvar = source;
+sourcechannel = dom.GetObject(source.Channel());
+
+if (sourcechannel.HssType() <> "CLIMATECONTROL_REGULATOR"){ ! check if the source is linked to a climat regulator
+	system.Exec("logger -t \""#sourcechannel.Name()#"\" -p user.error \"$src$ is not a climat control regulator. It's: "#sourcechannel.HssType()#"\"");
+	quit;
+}
+regulator = sourcechannel;
+regulatordevice = dom.GetObject(regulator.Device());
+
+if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Current time (minute): "#currentdayminute#"\"");}
+
+system.Exec("echo \""#system.Date("%A")#"\" | awk \'{print toupper($0)}\'",&stdout,&stderr); ! The week day needs to be upper char
+weekdaystr = stdout.Substr(0,stdout.Length()-1);  ! remove return line char
+if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Week day: "#weekdaystr#"\"");}
+
+if (debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Variable name-"#regulatorvar.Name()#", value-"#regulatorvar.State()#"\"");}
+
+! Get the channel mode
+regulator = sourcechannel;
+regulatordevice = dom.GetObject(regulator.Device());
+varname = ""; regulatorvar = "";
+foreach (varname,regulator.DPs().EnumUsedNames()){
+  if (varname.Find("regulatormode") <> -1){ ! find if a "regulatormode" linked (to regulator) variable is present 
+    regulatorvar = dom.GetObject(varname);
+    regulatormode = regulatorvar.State();
+	if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Found variable name-"#regulatorvar.Name()#", value-"#regulatorvar.State()#"\"");}
+  }
+}
+if (regulatorvar.Name() <> ""){
+		regulatormode = regulatorvar.State();
+} 
+else {
+	system.Exec("/usr/local/getparam.tcl "+ regulator.Address()+" MODE_TEMPERATUR_REGULATOR",&stdout,&stderr);
+	stdout = stdout.Substr(0,stdout.Length()-1);   ! remove return line char
+	if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Get regulator temperature mode getparam.tcl: stdout="#stdout#", stderr="#stderr#"\"");}
+	if (stderr <> ""){
+		system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.error \"Error on getparam.tcl request - exit \"");
+		quit;
+	}
+	regulatormode = stdout.ToInteger();
+}
+
+if (debug){system.Exec("logger -t "#regulator.Name()#"-"#regulator.Address()#" -p user.info \"Regulator mode: "#regulatormode#"\"");}
+
+if (regulatormode == 2) { ! Execute only for CCU mode
+  string temperaturelist = "";
+  string timeoutlist = "";
+  system.Exec("/usr/local/getparam.tcl "+ regulator.Address(),&stdout,&stderr);
+  string line = "";
+  foreach(line, stdout.Split(nl)) {
+    if (line.Find("TIMEOUT_" # weekdaystr) != -1) {
+      timeoutlist = timeoutlist # line # tab;
+    }
+    if (line.Find("TEMPERATUR_" # weekdaystr) != -1 ) {
+      temperaturelist = temperaturelist # line # tab;
+    }
+  }
+  if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Timeout list: "#timeoutlist#"\"");}
+  if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Temperature list: "#temperaturelist#"\"");}
+  integer i = 0;
+  integer prevval = 0;
+  while((currentdayminute > timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToInteger()) || (currentdayminute < prevval)) {
+    prevVal = timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToInteger();
+    i = i + 1;
+  }
+  if(debug){system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"index after timeout: "#i#"\"");}
+  string timeoutindex = timeoutlist.StrValueByIndex(tab,i).StrValueByIndex("=",0).StrValueByIndex("_",2);
+  roomsetpoint = temperaturelist.StrValueByIndex(tab,i).StrValueByIndex("=",1).ToFloat();
+  if (regulatorvar.Name() <> ""){
+    regulatorvar.State(1); ! set to AUTO mode
+  }
+  else {
+    xmlrpc.PutParamset(regulatordevice.Interface(),regulator.Address(),"MASTER","MODE_TEMPERATUR_REGULATOR",2); ! set to AUTO mode
+  }
+  regulator.DPByHssDP("SETPOINT").State(roomsetpoint);
+  system.Exec("logger -t \""#regulator.Name()#"-"#regulator.Address()#"\" -p user.info \"Setpoint: "#roomsetpoint#", variable name: "#regulatorvar.Name()#" - state:"#regulatorvar.State()#"\"",&stdout,&stderr);
+}

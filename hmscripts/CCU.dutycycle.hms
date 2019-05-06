@@ -1,0 +1,40 @@
+! HomeMatic-Script
+! DUTY CYCLE ABFRAGEN
+! http://www.christian-luetgens.de/homematic/cuxd/dutycycle/Duty_Cycle.htm
+
+string s_prefix = "Duty Cycle ";
+string stdout;
+string stderr;
+
+string s_cmd = "echo 'load tclrpc.so; puts [xmlrpc http://127.0.0.1:2001/ listBidcosInterfaces ]'|tclsh";
+
+system.Exec(s_cmd,&stdout,&stderr);
+string s_reply = stdout;
+
+string s_atom;
+string s_address;
+integer i_run = 0;
+object o_sysvar;
+foreach (s_atom, s_reply.Split (" ")) {
+  if (i_run == 0) {
+    if (s_atom.Find ("ADDRESS") >= 0) {
+      i_run = 1;
+    }
+    if (s_atom.Find ("DUTY_CYCLE") >= 0) {
+      i_run = 2;
+    }
+  } else {
+    if (i_run == 1) {
+      s_address = s_atom;
+    }
+    if (i_run == 2) {
+      o_sysvar = dom.GetObject (s_prefix # s_address);
+      if (o_sysvar) {
+        o_sysvar.State (s_atom.ToFloat());
+      }
+    }
+    i_run = 0;
+  }
+}
+
+!  Ende des Scripts

@@ -1,0 +1,52 @@
+!
+! Set all temperature regulator to the programed value after a restart of the CCU
+! ----- User setable variables
+!
+string groupname = "chauffage";                                 ! Groupe de chauffage
+boolean debug                   = false;                                 ! if set, output what is done
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = "";
+string stderr = "";
+string nl = "\n"; ! new line char
+string tab = "\t";  ! tab char
+object group = dom.GetObject(groupname);
+integer regulatormode;
+
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+string channelid;
+foreach(channelid, group.EnumUsedIDs()){
+	object channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	if (channel.HssType() == "CLIMATECONTROL_REGULATOR"){
+		object regulator = channel;
+    string varname = "";
+    foreach (varname,channel.DPs().EnumUsedNames()){
+      if (varname.Find("regulatormode") <> -1){
+        object regulatormodevar = dom.GetObject(varname);
+        system.Exec("/usr/local/getparam.tcl "+ regulator.Address(),&stdout,&stderr);
+        string line = "";
+        foreach(line, stdout.Split(nl)) {
+          if (line.Find("MODE_TEMPERATUR_REGULATOR") != -1){
+			regulatormode = line.StrValueByIndex("=",1).ToInteger();
+            if (regulatormode <> regulatormodevar.State()){
+				if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": change the "#regulatormodevar.Name()#" from "#regulatormodevar.State()#" to "#regulatormode);}
+				system.Exec("logger -t "#regulator.Name()#"-"#regulator.Address()#" -p user.info \"Change the "#regulatormodevar.Name()#" from "#regulatormodevar.State()#" to "#regulatormode#"\"",&stdout,&stderr);
+				regulatormodevar.State(regulatormode);
+            }
+            if (debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": Regulator mode: "#regulatormodevar.State());}
+            system.Exec("logger -t "#regulator.Name()#"-"#regulator.Address()#" -p user.info \"Regulator mode: "#regulatormodevar.State()#"\"",&stdout,&stderr);
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,31 @@
+! Get Master parameter
+! ----- User setable variables
+
+string groupname = "test";                                 ! Groupe de chauffage
+boolean debug = true;
+
+!
+! ------ Execution nothing needs to be changed below this line -----------
+!
+string stdout = "";
+string stderr = "";
+
+object group = dom.GetObject(groupname);
+! test if the group is present
+if(!group){
+  if(debug){WriteLine("Function group or room name ("#groupname#") does not exist - quit!");}
+  quit;
+};
+
+if(debug){WriteLine("Channelids:\t"#group.EnumUsedIDs());}
+
+! Set the channels regulator, tempsensor and heatswitch
+string channelid;
+foreach(channelid, group.EnumUsedIDs()){
+	object channel = dom.GetObject(channelid);
+	if(debug){WriteLine("Channel info "#channelid#"-"#channel.Name()#": address-"#channel.Address()#", type-"#channel.HssType());}
+	object regulator = channel;
+	object regulatordevice = dom.GetObject(regulator.Device());
+	WriteLine("Channel info "#channelid#"-"#channel.Name()#": "#xmlrpc.GetParamset(regulatordevice.Interface(), regulator.Address(), "MASTER"));
+	
+}
