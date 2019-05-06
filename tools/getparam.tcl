@@ -7,7 +7,8 @@
 #   tclsh getparam.tcl <address> <parameter>
 #   parameter:
 #       - address:		device address of the MASTER like GEQ004711:2
-#       - parameter:	parameter name if not present it'll return the list of all available parameters.
+#       - parameter:	parameter name if not present it'll return the list of all available parameters. If no parameter set, it will return all parameters and values. The parameter name are ordered using dictionary acending mode.
+#
 #   example:
 #   tclsh getparam.tcl GEQ004711:2 MODE_TEMPERATUR_REGULATOR
 #   return the parameter value.
