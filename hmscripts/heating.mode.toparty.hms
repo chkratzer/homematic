@@ -51,7 +51,7 @@ if (currentdate > enddate){
 	if (debug){WriteLine("End date and time is in the past or in bad format ("#holidayenddate.Variable()#") - quit!");}
 	quit;
 }
-diffday = (enddate - currentdate).ToInteger() / 86400;
+diffday = (enddate.Format("%F") - currentdate.Format("%F")).ToInteger() / 86400;
 if (diffday >= 200){
 	enddate = (currentdate.ToInteger() + (200 *86400)).ToTime();
 	if (debug){WriteLine("End date and time over max allowed value of 200 days ("#diffday#") - set new end date: "#enddate);}
